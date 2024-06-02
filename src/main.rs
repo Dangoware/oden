@@ -9,14 +9,24 @@ use std::{
     time::Duration,
 };
 
-use songbird::SerenityInit;
+use songbird::{tracks::TrackHandle, SerenityInit};
+use reqwest::Client as HttpClient;
 
 // Types used by all command functions
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
 // Custom user data passed to all command functions
-pub struct Data {
+pub struct Data {}
+
+struct HttpKey;
+impl serenity::prelude::TypeMapKey for HttpKey {
+    type Value = HttpClient;
+}
+
+struct CurrentTrack;
+impl serenity::prelude::TypeMapKey for CurrentTrack {
+    type Value = TrackHandle;
 }
 
 async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
@@ -47,6 +57,7 @@ async fn main() {
             commands::join(),
             commands::leave(),
             commands::play(),
+            commands::stop(),
         ],
 
         prefix_options: poise::PrefixFrameworkOptions {
@@ -74,6 +85,16 @@ async fn main() {
             })
         },
 
+        // Every command invocation must pass this check to continue execution
+        command_check: Some(|ctx| {
+            Box::pin(async move {
+                if ctx.guild_id().is_none() {
+                    return Ok(false);
+                }
+                Ok(true)
+            })
+        }),
+
         event_handler: |_ctx, event, _framework, _data| {
             Box::pin(async move {
                 println!(
@@ -91,9 +112,7 @@ async fn main() {
             Box::pin(async move {
                 println!("Logged in as \"{}\"", _ready.user.name);
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data {
-                    // data goes here
-                })
+                Ok(Data {})
             })
         })
         .options(options)
@@ -107,6 +126,7 @@ async fn main() {
     let mut client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)
         .register_songbird()
+        .type_map_insert::<HttpKey>(HttpClient::new())
         .await
         .unwrap();
 

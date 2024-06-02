@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 env_logger = "0.11.3"
 poise = "0.6.1"
+reqwest = "0.11"
 songbird = "0.4.1"
 symphonia = { version = "0.5.4", features = ["all-codecs"] }
 tokio = { version = "1.38.0", features = ["macros", "full"] }

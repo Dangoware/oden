@@ -1,10 +1,10 @@
-use std::process::{Child, Command, Stdio};
+use std::{borrow::BorrowMut, process::{Child, Command, Stdio}};
 
 use serenity::async_trait;
-use songbird::{input::ChildContainer, Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
+use songbird::{input::{ChildContainer, YoutubeDl}, Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use url::Url;
 
-use crate::{Context, Error};
+use crate::{Context, CurrentTrack, Error, HttpKey};
 
 struct TrackErrorNotifier;
 
@@ -108,11 +108,11 @@ pub async fn leave(
 #[poise::command(prefix_command, track_edits)]
 pub async fn play(
     ctx: Context<'_>,
-    url: Option<Url>
+    input_query: Vec<String>
 ) -> Result<(), Error> {
-    let url = match url {
-        Some(url) => url,
-        None => {
+    let input_query = match input_query.is_empty() {
+        false => input_query,
+        true => {
             ctx.channel_id()
                 .say(&ctx.http(), "Must provide a URL to a video or audio")
                 .await?;
@@ -121,7 +121,7 @@ pub async fn play(
         },
     };
 
-    let do_search = !url.as_str().starts_with("http");
+    let no_search = input_query[0].starts_with("http");
 
     let guild_id = ctx.guild_id().unwrap();
 
@@ -133,28 +133,53 @@ pub async fn play(
     if let Some(handler_lock) = manager.get(guild_id) {
         let mut handler = handler_lock.lock().await;
 
-        let yt_dlp = Command::new("yt-dlp")
-            .args(vec![
-                "-f", "bestaudio",
-                "-o", "-",
-                url.as_str()
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
+        let http_client = {
+            let data = ctx.serenity_context().data.read().await;
+            data.get::<HttpKey>()
+                .cloned()
+                .expect("Guaranteed to exist in the typemap.")
+        };
 
-        let src = ChildContainer::new(
-            vec![
-                yt_dlp,
-            ]
-        );
-        let _ = handler.play_input(src.into());
+        let yt_dlp = if no_search {
+            YoutubeDl::new(http_client, input_query[0].clone())
+        } else {
+            YoutubeDl::new_search(http_client, input_query.join(" "))
+        };
+
+        let track = handler.play_input(yt_dlp.into());
+
+        let mut data = ctx.serenity_context().data.write().await;
+        data.insert::<CurrentTrack>(track);
 
         ctx.channel_id().say(&ctx.http(), "Playing song").await?;
     } else {
         ctx.channel_id()
             .say(&ctx.http(), "Not in a voice channel to play in")
             .await?;
+    }
+
+    Ok(())
+}
+
+#[poise::command(prefix_command, track_edits)]
+pub async fn stop(
+    ctx: Context<'_>,
+    input_query: Vec<String>
+) -> Result<(), Error> {
+    let manager = songbird::get(ctx.serenity_context())
+        .await
+        .expect("Songbird Voice client placed in at initialisation.")
+        .clone();
+
+    let guild_id = ctx.guild_id().unwrap();
+
+    if let Some(handler_lock) = manager.get(guild_id) {
+        let mut handler = handler_lock.lock().await;
+
+        handler.stop();
+
+        let mut data = ctx.serenity_context().data.write().await;
+        data.remove::<CurrentTrack>();
     }
 
     Ok(())
