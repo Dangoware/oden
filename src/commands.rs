@@ -140,13 +140,12 @@ pub async fn play(
                 url.as_str()
             ])
             .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::null())
+            .spawn()?;
 
         let src = ChildContainer::new(
             vec![
                 yt_dlp,
-
             ]
         );
         let _ = handler.play_input(src.into());
